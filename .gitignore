@@ -1,0 +1,6 @@
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
+
+# Bundled macOS-only Java runtime (install Java locally if needed)
+/tools/java17/

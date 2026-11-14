@@ -4,3 +4,6 @@
 
 # Bundled macOS-only Java runtime (install Java locally if needed)
 /tools/java17/
+
+# Generated rover simulation output
+/rover_telemetry.csv

@@ -1,6 +1,9 @@
 .data
 heading_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
 welcome_str: .asciiz "Rover system started successfully!\n"
+charge_str: .asciiz "Initial charge: "
+maxcharge_str: .asciiz "Maximum capacity: "
+drain_str: .asciiz "Power drain rate: "
 
 .text
 .globl main
@@ -20,6 +23,21 @@ main:
     syscall
     # executing the MARS service four
     # printing the string whose address is in a0
+
+    # to print initial charge
+    li $v0, 4
+    la $a0, charge_str
+    syscall
+
+    # to print maximum capacity
+    li $v0, 4
+    la $a0, maxcharge_str
+    syscall
+
+    # to print drain rate
+    li $v0, 4
+    la $a0, drain_str
+    syscall
 
     # to print the welcome message
     li $v0, 4

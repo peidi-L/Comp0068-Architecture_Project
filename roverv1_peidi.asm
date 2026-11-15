@@ -5,6 +5,16 @@ charge_str: .asciiz "Initial charge: "
 maxcharge_str: .asciiz "Maximum capacity: "
 drain_str: .asciiz "Power drain rate: "
 
+# original rover levels
+PDR: .word 1
+# power drain rate
+MBC: .word 15
+# maximum battery capacity
+IBC: .word 5
+# initial battery charge
+charge: .word 0
+# this is given by IBC when the program starts
+
 .text
 .globl main
 
@@ -24,20 +34,41 @@ main:
     # executing the MARS service four
     # printing the string whose address is in a0
 
+
+     # initialise the current battery charge from IBC
+    lw $t0, IBC
+    sw $t0, charge
+
     # to print initial charge
     li $v0, 4
     la $a0, charge_str
     syscall
+
+    li $v0, 1
+    lw $a0, charge
+    syscall
+
 
     # to print maximum capacity
     li $v0, 4
     la $a0, maxcharge_str
     syscall
 
+
+    li $v0, 1
+    lw $a0, MBC
+    syscall
+
+
     # to print drain rate
     li $v0, 4
     la $a0, drain_str
     syscall
+
+     li $v0, 1
+    lw $a0, PDR
+    syscall
+    
 
     # to print the welcome message
     li $v0, 4

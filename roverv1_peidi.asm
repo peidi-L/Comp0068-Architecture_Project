@@ -1,9 +1,9 @@
 .data
 heading_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
-welcome_str: .asciiz "Rover system started successfully!\n"
+welcome_str: .asciiz "\nRover system started successfully!\n"
 charge_str: .asciiz "Initial charge: "
-maxcharge_str: .asciiz "Maximum capacity: "
-drain_str: .asciiz "Power drain rate: "
+maxcharge_str: .asciiz "\nMaximum capacity: "
+drain_str: .asciiz "\nPower drain rate: "
 
 # original rover levels
 PDR: .word 1

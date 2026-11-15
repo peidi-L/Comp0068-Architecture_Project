@@ -1,5 +1,6 @@
 .data
-message_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
+heading_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
+welcome_str: .asciiz "Rover system started successfully!\n"
 
 .text
 .globl main
@@ -13,12 +14,17 @@ main:
     # service number 4 means print string
     # note that service 4 specifically reads the string's address from register a0
 
-    la $a0, message_str
+    la $a0, heading_str
     # putting the address of the message string into register a0
 
     syscall
     # executing the MARS service four
     # printing the string whose address is in a0
+
+    # to print the welcome message
+    li $v0, 4
+    la $a0, welcome_str
+    syscall
 
     # to exit
     addi $v0, $0, 10

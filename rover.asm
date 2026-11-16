@@ -29,12 +29,18 @@ IBC: .word 5
 charge: .word 0
 # this is given by IBC when the program starts
 
-command_prompt_str: .asciiz "\nEnter command (S=status, Q=quit): "
+command_prompt_str: .asciiz "\nCommand (C n | S=status | Q=quit): "
 status_str: .asciiz "\nCurrent battery charge: "
 unknown_str: .asciiz "Unknown command. Try again.\n"
 goodbye_str: .asciiz "Rover controller stopped.\n"
 
-command_buffer: .space 16
+command_buffer: .space 64
+
+# Stage 4: command interface
+recharge_str:   .asciiz "Recharge accepted: +"
+units_str:      .asciiz " units.\n"
+invalid_command_str:    .asciiz "Invalid command. Use C n | S | Q.\n"
+cap_str:        .asciiz "Error, maximum battery capacity reached! Capped to the Max.\n"
 
 .text
 .globl main
@@ -302,12 +308,17 @@ command_loop:
     # Read a command string
     li $v0, 8
     la $a0, command_buffer
-    li $a1, 16
+    li $a1, 64
     syscall
 
     # Read the first character
     la $t0, command_buffer
     lb $t1, 0($t0)
+
+    # C = Recharge
+    li $t2, 67
+    beq $t1, $t2, command_recharge
+    # C n has an argument, so its own parser checks the remaining characters
 
     # require one command character followed by a newline
     lb $t3, 1($t0)
@@ -320,7 +331,7 @@ command_loop:
 
     # Q = quit
     li $t2, 81
-    beq $t1, $t2, quit_rover
+    beq $t1, $t2, command_quit
 
 unknown_command:
     # Unknown command
@@ -354,3 +365,133 @@ quit_rover:
     # Exit program
     j exit_program
     # using the original exit instructions from roverv1_peidi.asm
+
+
+# ==================================
+# Parse recharge command: C n
+# ==================================
+
+command_recharge:
+    # Expected format: C followed by space and n
+    la $t0, command_buffer
+
+    lb $t1, 1($t0)
+    li $t2, 32
+    bne $t1, $t2, bad_command
+
+    # Start reading number at position 2
+    addiu $t0, $t0, 2
+    li $t3, 0
+    li $t6, 0
+
+recharge_parse_loop:
+    lb $t1, 0($t0)
+
+    # reject a full command buffer without a newline
+    beq $t1, $zero, bad_command
+    li $t2, 10
+    beq $t1, $t2, recharge_parse_done
+
+    # Check ASCII digit range
+    blt $t1, 48, bad_command
+    bgt $t1, 57, bad_command
+
+    addiu $t1, $t1, -48
+
+    # Prevent signed 32-bit integer overflow
+    li $t4, 214748364
+    bgtu $t3, $t4, bad_command
+    bne $t3, $t4, recharge_accumulate
+    li $t5, 7
+    bgtu $t1, $t5, bad_command
+
+recharge_accumulate:
+    li $t4, 10
+    multu $t3, $t4
+    mflo $t3
+    addu $t3, $t3, $t1
+
+    addiu $t6, $t6, 1
+    addiu $t0, $t0, 1
+    j recharge_parse_loop
+
+recharge_parse_done:
+    # Require at least one digit and positive n
+    beq $t6, $zero, bad_command
+    blez $t3, bad_command
+
+    # Pass n in $a0
+    move $a0, $t3
+    jal recharge
+
+    j command_loop
+
+
+# ==================================
+# Quit command
+# ==================================
+
+command_quit:
+    # Q must be followed by a newline
+    la $t0, command_buffer
+    lb $t1, 1($t0)
+
+    li $t2, 10
+    beq $t1, $t2, quit_rover
+
+    j bad_command
+
+
+# ==================================
+# Invalid command
+# ==================================
+
+bad_command:
+    li $v0, 4
+    la $a0, invalid_command_str
+    syscall
+
+    j command_loop
+
+
+# recharge
+# Input: $a0 = positive recharge amount
+# Updates: charge
+recharge:
+    lw $t0, charge
+    lw $t1, MBC
+
+    # Available battery capacity
+    subu $t2, $t1, $t0
+
+    # Check if recharge exceeds capacity
+    bgtu $a0, $t2, recharge_cap
+
+    addu $t0, $t0, $a0
+    sw $t0, charge
+
+    # Print success message
+    move $t3, $a0
+
+    li $v0, 4
+    la $a0, recharge_str
+    syscall
+
+    li $v0, 1
+    move $a0, $t3
+    syscall
+
+    li $v0, 4
+    la $a0, units_str
+    syscall
+
+    jr $ra
+
+recharge_cap:
+    sw $t1, charge
+
+    li $v0, 4
+    la $a0, cap_str
+    syscall
+
+    jr $ra

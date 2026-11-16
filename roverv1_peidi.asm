@@ -29,6 +29,13 @@ IBC: .word 5
 charge: .word 0
 # this is given by IBC when the program starts
 
+command_prompt_str: .asciiz "\nEnter command (S=status, Q=quit): "
+status_str: .asciiz "\nCurrent battery charge: "
+unknown_str: .asciiz "Unknown command. Try again.\n"
+goodbye_str: .asciiz "Rover controller stopped.\n"
+
+command_buffer: .space 16
+
 .text
 .globl main
 
@@ -138,6 +145,11 @@ show_config:
     la $a0, welcome_str
     syscall
 
+
+    j command_loop
+    # Contine to command prompt
+
+exit_program:
     # to exit
     addi $v0, $0, 10
     # putting service 10 into register v0
@@ -277,3 +289,68 @@ read_done:
     jr $ra
     # returning to the instruction after the jal that called read_setting
     # v0 still contains the selected number for the caller to store
+
+
+
+
+command_loop:
+    # Print command prompt
+    li $v0, 4
+    la $a0, command_prompt_str
+    syscall
+
+    # Read a command string
+    li $v0, 8
+    la $a0, command_buffer
+    li $a1, 16
+    syscall
+
+    # Read the first character
+    la $t0, command_buffer
+    lb $t1, 0($t0)
+
+    # require one command character followed by a newline
+    lb $t3, 1($t0)
+    li $t2, 10
+    bne $t3, $t2, unknown_command
+
+    # S = status
+    li $t2, 83
+    beq $t1, $t2, show_status
+
+    # Q = quit
+    li $t2, 81
+    beq $t1, $t2, quit_rover
+
+unknown_command:
+    # Unknown command
+    li $v0, 4
+    la $a0, unknown_str
+    syscall
+
+    j command_loop
+
+
+show_status:
+    # Print status message
+    li $v0, 4
+    la $a0, status_str
+    syscall
+
+    # Print current charge
+    li $v0, 1
+    lw $a0, charge
+    syscall
+
+    j command_loop
+
+
+quit_rover:
+    # Print goodbye message
+    li $v0, 4
+    la $a0, goodbye_str
+    syscall
+
+    # Exit program
+    j exit_program
+    # using the original exit instructions from roverv1_peidi.asm

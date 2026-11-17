@@ -1,308 +1,305 @@
 .data
-titleMSG:.asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
-enterPDR:.asciiz"Enter power drain rate PDR (units/sec) [default 1]: "
-enterMBC:.asciiz"\nEnter maximum battery capacity MBC [default 15]: "
-enterIBC:.asciiz"\nEnter initial battery charge IBC [default 5]: "
-showPDR:.asciiz"\nConfiguration accepted. PDR = "
-showMBC:.asciiz"\nMBC= "
-showIBC:.asciiz"\nIBC= "
-endLINE:.asciiz "\n"
-onlineMSG:.asciiz "Rover online. Beginning telemetry.\n"
-invalidMSG:.asciiz "Invalid value. Enter a positive integer.\n"
-rangeMSG:.asciiz "IBC must not exceed MBC. Try again.\n"
+heading_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
+welcome_str: .asciiz "\nRover system started successfully!\n"
+charge_str: .asciiz ", IBC = "
+maxcharge_str: .asciiz ", MBC = "
+drain_str: .asciiz "PDR = "
 
-input: .space 20
-inputIBCbuffer: .space 20#Set up a separate buffer for the IBC.
+# messages asking for the starting values
+drain_prompt_str: .asciiz "Enter power drain rate PDR (units/sec) [default 1]: "
+maxcharge_prompt_str: .asciiz "Enter maximum battery capacity MBC [default 15]: "
+charge_prompt_str: .asciiz "Enter initial battery charge IBC [default 5]: "
 
-# messages and input storage for the stage 5 command interface
+# messages for accepted settings and invalid input
+config_str: .asciiz "\nConfiguration accepted. "
+invalid_str: .asciiz "Invalid value. Enter a positive integer.\n"
+range_str: .asciiz "IBC must not exceed MBC. Try again.\n"
+
+buffer: .space 64
+# reserving 64 bytes in memory for the input string
+# this includes space for the newline and the zero byte ending the string
+
+# original rover levels
+PDR: .word 1
+# power drain rate
+MBC: .word 15
+# maximum battery capacity
+IBC: .word 5
+# initial battery charge
+charge: .word 0
+# this is given by IBC when the program starts
+
 command_prompt_str: .asciiz "\nCommand (C n | S n=solar | S=status | Q=quit): "
 status_str: .asciiz "\nCurrent battery charge: "
 unknown_str: .asciiz "Unknown command. Try again.\n"
 goodbye_str: .asciiz "Rover controller stopped.\n"
+
 command_buffer: .space 64
+
+# Stage 4: command interface
 recharge_str:   .asciiz "Recharge accepted: +"
 solar_str: .asciiz "Solar array aligned: +"
 units_str:      .asciiz " units.\n"
 invalid_command_str:    .asciiz "Invalid command. Use C n | S n | S | Q.\n"
 cap_str:        .asciiz "Error, maximum battery capacity reached! Capped to the Max.\n"
 
-# saved configuration and current battery charge
-.align 2
-PDR: .word 1
-MBC: .word 15
-IBC: .word 5
-charge: .word 0
-
 .text
 .globl main
+
 main:
-#input title
-addi $v0,$zero,4
-la $a0,titleMSG#la:load address.Place the memory address of titleMSG into $a0
-syscall
+    # to print the heading
+    addi $v0, $0, 4
+    # adding number four to zero which is in register zero
+    # placing it in register v0 which is another name for register 2
+    # the register v0 is used by MARS to identify which service syscall should request
+    # service number 4 means print string
+    # note that service 4 specifically reads the string's address from register a0
 
-#input PDR
-inputPDR:
-addi $s0,$zero,1 #First, put the default value 1into s0
+    la $a0, heading_str
+    # putting the address of the message string into register a0
 
-addi $v0,$zero,4#4:Print String
-la $a0,enterPDR
-syscall
+    syscall
+    # executing the MARS service four
+    # printing the string whose address is in a0
 
-addi $v0,$zero,8 #8:read string
-la $a0,input #Put the address of the input into $a0, so the user's input content is also placed in the corresponding space of the input.
-addi $a1,$zero,20#occupy a maximum of 20 bytes, including the null character at the end
-syscall
 
-la $t0,input
-lb $t1,0($t0)#Read a byte from the memory address pointed to by $t0 + 0 and store it in $t1
+    # to read the power drain rate
+    la $a0, drain_prompt_str
+    # putting the address of the prompt into a0
+    li $a1, 1
+    # putting the default value 1 into a1
+    # these are the arguments that read_setting will use
 
-addi $t4,$zero,10#The ASCII code for \ is decimal 10 (generated when the user presses Enter directly)
-# 10 is the newline character from Enter; a literal backslash has code 92
-beq $t1,$t4,inputMBC#If the values of t1 and t4 are equal, directly jump to "show result"
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidPDR
-beq $t1,$zero,inputMBC#Check if the input is an empty character
+    jal read_setting
+    # jumping to read_setting and saving the return address in ra
+    # when read_setting returns, v0 contains the selected number
+    sw $v0, PDR
+    # storing that number in memory at PDR before reading the next setting
 
-add $s0,$zero,$zero#When it is confirmed that the user has entered a number, the default value will be cleared.
+    # to read the maximum battery capacity
+    la $a0, maxcharge_prompt_str
+    li $a1, 15
+    # passing the prompt address and the default value 15
+    jal read_setting
+    sw $v0, MBC
+    # storing the selected maximum capacity in memory
 
-convert_loop:
-lb $t1,0($t0)
+read_ibc:
+    # to read the initial battery charge
+    la $a0, charge_prompt_str
+    li $a1, 5
+    # passing the prompt address and the default value 5
+    jal read_setting
+    # v0 now contains the selected initial charge
 
-beq $t1,$t4,checkPDR#Determine if there are still any numbers to stop the loop
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidPDR
-beq $t1,$zero,checkPDR#After the PDR is read, the next task is to input the MBC
+    lw $t0, MBC
+    # loading the accepted maximum capacity into t0
+    bgt $v0, $t0, bad_ibc
+    # jumping to bad_ibc if the initial charge is greater than the capacity
 
-addi $t5,$zero,48#Test whether each character of t1 is less than 0
-slt $t6,$t1,$t5#If each character of t1 is less than $t5, set $t6 to 1; otherwise, set it to 0.
-bne $t6,$zero,invalidPDR#Branch if Not Equal
+    sw $v0, IBC
+    # saving the initial charge only after it passes the capacity check
 
-addi $t5,$zero,57#Test whether t1 is larger than 9
-slt $t6,$t5,$t1
-bne $t6,$zero,invalidPDR
+     # initialise the current battery charge from IBC
+    lw $t0, IBC
+    sw $t0, charge
+    j show_config
+    # skipping the error message and going to the accepted settings
 
-addi $t1,$t1,-48#The character '1' is represented as 49 in ASCII. Here, the character is converted into a number
+bad_ibc:
+    li $v0, 4
+    la $a0, range_str
+    syscall
+    # printing the message that IBC must not exceed MBC
+    j read_ibc
+    # asking for IBC again without asking for PDR and MBC again
 
-# check the signed 32-bit limit before multiplying the number by ten
-# t4 still holds the newline code used by the original input loops
-li $t7,214748364
-bgtu $s0,$t7,invalidPDR
-bne $s0,$t7,accumulatePDR
-li $t8,7
-bgtu $t1,$t8,invalidPDR
-accumulatePDR:
-sll $t2,$s0,3#Shift left by 3 positions is equivalent to multiplying by 2 raised to the power of 3
-sll $t3,$s0,1
-add $s0,$t2,$t3#t2 (8 times) + t3 (2 times) = 10 times
-add $s0,$s0,$t1
+show_config:
+    # to print the accepted configuration
+    li $v0, 4
+    la $a0, config_str
+    syscall
 
-addi $t0,$t0,1#Move to the next character and then return to the loop.What has changed is the address, not the numerical value
-j convert_loop#jump back to convert_loop
+    # to print drain rate
+    li $v0, 4
+    la $a0, drain_str
+    syscall
 
-invalidPDR:
-addi $v0,$zero,4
-la $a0,invalidMSG
-syscall
-j inputPDR
+    li $v0, 1
+    lw $a0, PDR
+    syscall
 
-checkPDR:
-beq $s0,$zero,invalidPDR#if the output is 000, also invalid
-j inputMBC
-#inputMBC
-inputMBC:#Set a label, and redirect to this page after the PDR is completed
-addi $s1,$zero,15#The default value of MBC is 15
+    # to print maximum capacity
+    li $v0, 4
+    la $a0, maxcharge_str
+    syscall
 
-addi $v0,$zero,4
-la $a0,enterMBC
-syscall
+    li $v0, 1
+    lw $a0, MBC
+    syscall
 
-addi $v0,$zero,8
-la $a0,input
-addi $a1,$zero,20
-syscall
+    # to print initial charge
+    li $v0, 4
+    la $a0, charge_str
+    syscall
 
-la $t0,input#It can cover the content related to PDR in the input section
-lb $t1,0($t0)
-beq $t1,$t4,inputIBC
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidMBC
-beq $t1,$zero,inputIBC
+    li $v0, 1
+    lw $a0, charge
+    syscall
 
-add $s1,$zero,$zero
+    # to print the welcome message
+    li $v0, 4
+    la $a0, welcome_str
+    syscall
 
-convert_MBC:
-lb $t1,0($t0)
-beq $t1,$t4,checkMBC
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidMBC
-beq $t1,$zero,checkMBC
 
-addi $t5,$zero,48#check whether each character of MBC is less than 0
-slt $t6,$t1,$t5
-bne $t6,$zero,invalidMBC
-
-addi $t5,$zero,57#check whether each character of MBC is larger than 9
-slt $t6,$t5,$t1
-bne $t6,$zero,invalidMBC
-
-addi $t1,$t1,-48
-
-# check the signed 32-bit limit before multiplying the number by ten
-# t4 still holds the newline code used by the original input loops
-li $t7,214748364
-bgtu $s1,$t7,invalidMBC
-bne $s1,$t7,accumulateMBC
-li $t8,7
-bgtu $t1,$t8,invalidMBC
-accumulateMBC:
-sll $t2,$s1,3
-sll $t3,$s1,1
-add $s1,$t2,$t3
-add $s1,$s1,$t1
-
-addi $t0,$t0,1
-j convert_MBC
-
-checkMBC:
-beq $s1,$zero,invalidMBC
-j inputIBC
-
-invalidMBC:
-addi $v0,$zero,4
-la $a0,invalidMSG
-syscall
-
-j inputMBC
-
-#inputIBC
-inputIBC:
-addi $s2,$zero,5#The default value of IBC is 5
-
-addi $v0,$zero,4
-la $a0,enterIBC
-syscall
-
-addi $v0,$zero,8
-la $a0,inputIBCbuffer#Set up a separate buffer for the IBC.
-addi $a1,$zero,20
-syscall
-
-la $t0,inputIBCbuffer#Set up a separate buffer for the IBC.
-lb $t1,0($t0)
-
-beq $t1,$t4,checkIBC
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidIBC
-beq $t1,$zero,checkIBC
-
-add $s2,$zero,$zero
-
-convert_IBC:
-lb $t1,0($t0)
-beq $t1,$t4,checkIBC
-# reject a zero byte before the required newline
-beq $t1,$zero,invalidIBC
-beq $t1,$zero,checkIBC
-
-addi $t5,$zero,48
-slt $t6,$t1,$t5
-bne $t6,$zero,invalidIBC
-
-addi $t5,$zero,57
-slt $t6,$t5,$t1
-bne $t6,$zero,invalidIBC
-
-addi $t1,$t1,-48
-
-# check the signed 32-bit limit before multiplying the number by ten
-# t4 still holds the newline code used by the original input loops
-li $t7,214748364
-bgtu $s2,$t7,invalidIBC
-bne $s2,$t7,accumulateIBC
-li $t8,7
-bgtu $t1,$t8,invalidIBC
-accumulateIBC:
-sll $t2,$s2,3
-sll $t3,$s2,1
-add $s2,$t2,$t3
-add $s2,$s2,$t1
-
-addi $t0,$t0,1
-j convert_IBC
-
-checkIBC:
-beq $s2,$zero,invalidIBC
-slt $t6,$s1,$s2
-bne $t6,$zero,invalidRangeIBC
-j showtoPDR
-
-invalidIBC:
-addi $v0,$zero,4
-la $a0,invalidMSG
-syscall
-j inputIBC
-
-invalidRangeIBC:
-addi $v0,$zero,4
-la $a0,rangeMSG
-syscall
-j inputIBC
-
-#showPDR
-showtoPDR:
-addi $v0,$zero,4
-la $a0,showPDR
-syscall
-
-addi $v0,$zero,1#1:pirnt int
-add $a0,$zero,$s0
-syscall
-
-#showMBC
-showtoMBC:
-addi $v0,$zero,4
-la $a0,showMBC
-syscall
-
-addi $v0,$zero,1
-add $a0,$zero,$s1
-syscall
-
-#showIBC
-showtoIBC:
-addi $v0,$zero,4
-la $a0,showIBC
-syscall
-
-addi $v0,$zero,1
-add $a0,$zero,$s2
-syscall
-
-#newline
-addi $v0,$zero,4
-la $a0,endLINE
-syscall
-
-#online message
-addi $v0,$zero,4
-la $a0,onlineMSG
-syscall#No text content, just a line break
-# this syscall prints onlineMSG; the command interface starts below
-
-# copy the accepted register values into memory for the command handlers
-sw $s0,PDR
-sw $s1,MBC
-sw $s2,IBC
-sw $s2,charge
-j command_loop
+    j command_loop
+    # Contine to command prompt
 
 exit_program:
-addi $v0,$zero,10#exit
-syscall
+    # to exit
+    addi $v0, $0, 10
+    # putting service 10 into register v0
+    # MARS defines 10 as exit
+    # exit is prepared at this line of code, syscall performs it
+    syscall
 
 
-# command handling added from rover_stage5.asm
+# to read one setting and return a positive integer
+# a0 contains the address of the prompt before calling this procedure
+# a1 contains the default number before calling this procedure
+# v0 contains the selected number when the procedure returns
+read_setting:
+    addiu $sp, $sp, -12
+    # moving the stack pointer down by 12 bytes
+    # this makes room for three saved registers, each using 4 bytes
+
+    sw $ra, 8($sp)
+    # saving the return address so it can be restored before returning
+    sw $s0, 4($sp)
+    sw $s1, 0($sp)
+    # saving the previous contents of s0 and s1 before using them
+
+    move $s0, $a0
+    # copying the prompt address into s0
+    move $s1, $a1
+    # copying the default value into s1
+    # a0 and a1 will be reused for syscalls, so these copies keep the arguments
+
+input_again:
+    li $v0, 4
+    move $a0, $s0
+    syscall
+    # printing the prompt whose address was saved in s0
+
+    li $v0, 8
+    # service number 8 means read a string
+    la $a0, buffer
+    # telling MARS where to store the characters that are entered
+    li $a1, 64
+    # telling service 8 the buffer size, including its ending zero byte
+    # a1 now holds a size, while the default number is still saved in s1
+    syscall
+
+    la $t0, buffer
+    # putting the address of the first character into t0
+    lb $t1, 0($t0)
+    # reading one byte from that address into t1
+    # each character in these inputs uses one byte
+
+    li $t2, 10
+    # 10 is the character code for a newline
+    beq $t1, $t2, use_default
+    # if the first character is a newline, only Enter was pressed
+
+    li $t3, 0
+    # starting the number being calculated at zero
+
+parse_loop:
+    lb $t1, 0($t0)
+    # reading the character at the current address
+
+    beq $t1, $zero, invalid_input
+    # a zero byte before the newline means the input may have been cut off
+    # rejecting this stops a long input from being accepted using only its start
+
+    li $t2, 10
+    beq $t1, $t2, parse_done
+    # a newline means all the entered characters have been checked
+
+    blt $t1, 48, invalid_input
+    bgt $t1, 57, invalid_input
+    # the character codes for the digits 0 to 9 are 48 to 57
+    # rejecting anything outside this range, including spaces and minus signs
+
+    addiu $t1, $t1, -48
+    # converting the character code into its digit value
+    # for example the character 5 has code 53, so 53 minus 48 gives 5
+
+    li $t4, 214748364
+    # the largest positive signed 32-bit integer is 2147483647
+    # checking before multiplying the current number by 10 and adding a digit
+    bgtu $t3, $t4, invalid_input
+    # if the current number is already above this limit, another digit is too much
+    # bgtu compares the register values as unsigned numbers
+
+    bne $t3, $t4, accumulate
+    # if the number is below the limit, any digit from 0 to 9 is safe
+    li $t5, 7
+    bgtu $t1, $t5, invalid_input
+    # if the number equals 214748364, the final digit must be at most 7
+
+accumulate:
+    li $t4, 10
+    multu $t3, $t4
+    # multiplying the number calculated so far by 10
+    # multu puts its product in the hi and lo registers
+    mflo $t3
+    # copying the lower 32 bits of the product from lo into t3
+    # the earlier checks make sure the result will fit
+    addu $t3, $t3, $t1
+    # adding the new digit to the number
+    # for example, if t3 was 12 and the next digit is 3, 12 times 10 plus 3 is 123
+
+    addiu $t0, $t0, 1
+    # moving the address forward by one byte to the next character
+    j parse_loop
+    # going back to check that next character
+
+parse_done:
+    blez $t3, invalid_input
+    # rejecting a result less than or equal to zero
+    move $v0, $t3
+    # putting the accepted number into the return-value register v0
+    j read_done
+
+use_default:
+    move $v0, $s1
+    # using the saved default number as the return value
+    j read_done
+
+invalid_input:
+    li $v0, 4
+    la $a0, invalid_str
+    syscall
+    # printing the invalid value message
+    j input_again
+    # asking for the same setting again
+
+read_done:
+    lw $s1, 0($sp)
+    lw $s0, 4($sp)
+    lw $ra, 8($sp)
+    # restoring the register values saved at the start of the procedure
+    addiu $sp, $sp, 12
+    # moving the stack pointer back to where it was before the procedure
+    jr $ra
+    # returning to the instruction after the jal that called read_setting
+    # v0 still contains the selected number for the caller to store
+
+
+
+
 command_loop:
     # Print command prompt
     li $v0, 4
@@ -377,7 +374,7 @@ quit_rover:
 
     # Exit program
     j exit_program
-    # using the exit instructions preserved from the original rover.asm
+    # using the original exit instructions from roverv1_peidi.asm
 
 
 # ==================================
@@ -386,64 +383,48 @@ quit_rover:
 
 command_recharge:
     # Expected format: C followed by space and n
-    jal parse_command_number
-    beq $v0, $zero, bad_command
-
-    # Pass n in $a0
-    move $a0, $v0
-    li $a1, 0
-    # zero identifies recharge when selecting the output message
-    jal recharge
-
-    j command_loop
-
+    li $t7, 0
+    # zero marks a recharge command
+    j parse_command_number
 
 command_solar:
-    # to read the number after S using the same parser as recharge
-    jal parse_command_number
-    beq $v0, $zero, bad_command
+    li $t7, 1
+    # one marks a solar command
 
-    move $a0, $v0
-    j handle_solar
-
-
-# to read the positive number already stored in command_buffer
-# C n and S n use the same checks
-# v0 returns the number if valid, or zero if invalid
 parse_command_number:
     la $t0, command_buffer
 
     lb $t1, 1($t0)
     li $t2, 32
-    bne $t1, $t2, number_invalid
+    bne $t1, $t2, bad_command
 
     # Start reading number at position 2
     addiu $t0, $t0, 2
     li $t3, 0
     li $t6, 0
 
-number_parse_loop:
+recharge_parse_loop:
     lb $t1, 0($t0)
 
     # reject a full command buffer without a newline
-    beq $t1, $zero, number_invalid
+    beq $t1, $zero, bad_command
     li $t2, 10
-    beq $t1, $t2, number_parse_done
+    beq $t1, $t2, recharge_parse_done
 
     # Check ASCII digit range
-    blt $t1, 48, number_invalid
-    bgt $t1, 57, number_invalid
+    blt $t1, 48, bad_command
+    bgt $t1, 57, bad_command
 
     addiu $t1, $t1, -48
 
     # Prevent signed 32-bit integer overflow
     li $t4, 214748364
-    bgtu $t3, $t4, number_invalid
-    bne $t3, $t4, number_accumulate
+    bgtu $t3, $t4, bad_command
+    bne $t3, $t4, recharge_accumulate
     li $t5, 7
-    bgtu $t1, $t5, number_invalid
+    bgtu $t1, $t5, bad_command
 
-number_accumulate:
+recharge_accumulate:
     li $t4, 10
     multu $t3, $t4
     mflo $t3
@@ -451,19 +432,21 @@ number_accumulate:
 
     addiu $t6, $t6, 1
     addiu $t0, $t0, 1
-    j number_parse_loop
+    j recharge_parse_loop
 
-number_parse_done:
+recharge_parse_done:
     # Require at least one digit and positive n
-    beq $t6, $zero, number_invalid
-    blez $t3, number_invalid
+    beq $t6, $zero, bad_command
+    blez $t3, bad_command
 
-    move $v0, $t3
-    jr $ra
+    # Pass n in $a0
+    move $a0, $t3
+    bne $t7, $zero, handle_solar
+    li $a1, 0
+    # zero selects the recharge message
+    jal recharge
 
-number_invalid:
-    move $v0, $zero
-    jr $ra
+    j command_loop
 
 
 # ==================================

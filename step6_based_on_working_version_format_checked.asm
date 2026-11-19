@@ -301,7 +301,7 @@ command_recharge:
 
 #step 6
 command_dock:
-	li $t7, 2
+	li $t7, 3
 	j parse_command_number
 
 command_solar:
@@ -350,7 +350,7 @@ recharge_parse_done:
 
     move $a0, $t3
     
-    li $t2, 2
+    li $t2, 3
     beq $t7, $t2, handle_dock
     
     

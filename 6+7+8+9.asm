@@ -65,6 +65,9 @@ telemetry_charge_str: .asciiz "] Charge: "
 slash_str: .asciiz "/"
 offline_suffix_str: .asciiz "  -- ROVER OFFLINE --"
 newline_str: .asciiz "\n"
+step9_prompt_str: .asciiz "Command (C n | S n | D n | T n | R | Q): "
+line_open: .word 0
+was_offline: .word 0
 
 .text
 .globl main
@@ -325,12 +328,12 @@ read_done:
 
 command_loop:
     # Print command prompt
-    li $v0, 4
+    #step 9 qixiong
+    j step9_read_start
+	li $v0, 4
     la $a0, command_prompt_str
     syscall
 
-    #step 9 qixiong
-    j step9_read_start
     
     # Read a command string
     li $v0, 8
@@ -719,7 +722,21 @@ step9_poll:
 
     	li $t4, 13
     	beq $t3, $t4, step9_poll
+		li $t4, 8
+		beq $t3, $t4, step9_backspace
+		li $t4, 127
+		beq $t3, $t4, step9_backspace
 
+		lw $t4, line_open
+
+		bne $t4, $zero, step9_store
+		li $v0, 4
+		la $a0, step9_prompt_str
+		syscall
+		li $t4, 1
+		sw $t4, line_open
+
+step9_store:
     	bne $t5, $zero, step9_poll
     	li $t4, 62
     	bgeu $t6, $t4, step9_too_long
@@ -735,9 +752,10 @@ step9_poll:
 
     	j step9_poll
 
-#step 9 Qixiong
+#step 9 qixiong
 step9_input_done:
-    	li $t4, 10
+    	beq $t6, $zero, step9_poll
+		li $t4, 10
     	sb $t4, 0($t0)
     	addiu $t0, $t0, 1
     	sb $zero, 0($t0)
@@ -745,7 +763,8 @@ step9_input_done:
     	li $v0, 11
     	li $a0, 10
     	syscall
-    	bne $t5, $zero, bad_command
+    	sw $zero, line_open
+		bne $t5, $zero, bad_command
 	
     	j step9_input_ready
 
@@ -753,6 +772,24 @@ step9_input_done:
 step9_too_long:
     	li $t5, 1
     	j step9_poll
+
+step9_backspace:
+	beq $t6, $zero, step9_poll
+	bne $t5, $zero, step9_poll
+	addiu $t0, $t0, -1
+	addiu $t6, $t6, -1
+	sb $zero, 0($t0)
+
+	li $v0, 4
+	la $a0, newline_str
+ 	syscall
+	la $a0, step9_prompt_str
+	syscall
+	la $a0, command_buffer
+	syscall
+
+	j step9_poll
+
 
 #step9 qixiong
 step9_no_key:
@@ -793,18 +830,25 @@ step9_tick:
 	addiu $t1, $t1, 1
 	sw $t1, elapsed_seconds
 	
+	lw $t1, line_open
+	beq $t1, $zero, step9_check_drain
 	li $v0, 4
 	la $a0, newline_str
 	syscall
-	
+
+step9_check_drain:	
 	lw $t1, offline
+	bne $t1, $zero, step9_offline_tick
+	lw $t1, was_offline
+	sw $zero, was_offline
 	bne $t1, $zero, step9_print_telemetry
 	
 	lw $t1, charge
 	lw $t2, PDR
 	bgtu $t1, $t2, step9_drain
 	j step9_natural_offline
-	
+
+
 step9_drain:
 	subu $t1, $t1, $t2
 	sw $t1, charge
@@ -818,6 +862,9 @@ step9_natural_offline:
 	la $a0, zerobattery
 	syscall
 
+step9_offline_tick:
+	li $t1, 1
+	sw $t1, was_offline
 	
 	
 step9_print_telemetry:
@@ -865,12 +912,17 @@ step9_print_telemetry:
 	
 step9_reprint:
 	li $v0, 4
-	la $a0, command_prompt_str
+	la $a0, newline_str
 	syscall
-    # the prompt starts with a newline, which also ends the telemetry line
+    
+	la $a0, step9_prompt_str
+	syscall
+	
+    li $t1, 1
+	sw $t1, line_open
+	li $v0, 4
 	la $a0, command_buffer
 	syscall
-    # printing what has already been typed
 
 	lw $t6, 0($sp)
 	lw $t5, 4($sp)

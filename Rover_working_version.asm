@@ -1,6 +1,6 @@
 .data
 heading_str: .asciiz "=== ROVER POWER CONTROLLER v1.0 ===\n"
-welcome_str: .asciiz "\nRover system started successfully!\n"
+success_str: .asciiz "\nRover system started successfully!\n"
 charge_str: .asciiz ", IBC = "
 maxcharge_str: .asciiz ", MBC = "
 drain_str: .asciiz "PDR = "
@@ -149,7 +149,7 @@ show_config:
 
     # to print the welcome message
     li $v0, 4
-    la $a0, welcome_str
+    la $a0, success_str
     syscall
 
 
